@@ -1,35 +1,30 @@
 FROM php:8.2-apache
 
-# OS deps
+# Packages & PHP extensions Dolibarr needs
 RUN apt-get update && apt-get install -y \
-    libpng-dev libjpeg-dev libfreetype6-dev libzip-dev libxml2-dev libicu-dev \
-    libonig-dev libldap2-dev libxslt1.1 libxslt-dev libcurl4-openssl-dev unzip \
-    && rm -rf /var/lib/apt/lists/*
+    libpng-dev libjpeg-dev libfreetype6-dev libzip-dev libicu-dev unzip \
+ && rm -rf /var/lib/apt/lists/* \
+ && docker-php-ext-configure gd --with-freetype --with-jpeg \
+ && docker-php-ext-install -j$(nproc) gd mysqli pdo pdo_mysql zip intl
 
-# PHP extensions required/recommended by Dolibarr
-RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
- && docker-php-ext-install -j$(nproc) gd mysqli pdo pdo_mysql zip intl opcache xml mbstring soap exif
+# Enable Apache rewrite
+RUN a2enmod rewrite
 
-# Apache config: enable rewrite/headers
-RUN a2enmod rewrite headers
+# Set DocumentRoot to /var/www/html/htdocs (no external conf file needed)
+ENV APACHE_DOCUMENT_ROOT=/var/www/html/htdocs
+RUN sed -ri 's!/var/www/html!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/sites-available/*.conf /etc/apache2/apache2.conf
 
-# Set Apache DocumentRoot to /var/www/html/htdocs
-COPY docker/000-default.conf /etc/apache2/sites-available/000-default.conf
-
-# Put Dolibarr under /var/www/html (the repo content is the app)
+# Copy your forked Dolibarr source into the image
 COPY . /var/www/html/
 
-# Ensure web files owned by www-data
-RUN chown -R www-data:www-data /var/www/html
-
-# Prepare persistent data mount (Railway Volume) at /var/dolibarr
-# We'll symlink Dolibarr's 'documents' and 'htdocs/conf' to this mount.
-RUN mkdir -p /var/dolibarr && chown -R www-data:www-data /var/dolibarr
-
-# Entrypoint to create symlinks and start Apache
-COPY docker/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+# Persistence: create a place for documents & conf and symlink
+RUN mkdir -p /var/dolibarr/documents /var/dolibarr/conf \
+ && chown -R www-data:www-data /var/www/html /var/dolibarr \
+ && rm -rf /var/www/html/documents || true \
+ && ln -s /var/dolibarr/documents /var/www/html/documents \
+ && rm -rf /var/www/html/htdocs/conf || true \
+ && ln -s /var/dolibarr/conf /var/www/html/htdocs/conf
 
 WORKDIR /var/www/html/htdocs
 EXPOSE 80
-ENTRYPOINT ["/entrypoint.sh"]
+CMD ["apache2-foreground"]
